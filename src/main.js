@@ -4,6 +4,11 @@ import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
 import './style.css';
 
+function escapeHtml(text) {
+    if (!text) return '';
+    return String(text).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
 // =========================================
 // 1. CONFIGURATION
 // =========================================
@@ -402,11 +407,11 @@ function getStatusColor(s) {
 // =========================================
 async function selectTask(taskId) {
     if (!sb) return;
+    const panel = document.getElementById('detail-panel');
     try {
         activeTaskId = taskId;
         refreshList(); // Highlight selected
         
-        const panel = document.getElementById('detail-panel');
         panel.classList.remove('empty');
         panel.innerHTML = '<div style="padding:40px; text-align:center; color:var(--text-muted);">Loading details...</div>';
 
@@ -454,18 +459,21 @@ async function selectTask(taskId) {
 
                 <div class="section-header">Activity & Logs</div>
                 <div>
-                    ${(logs||[]).map(l => `
+                    ${(logs||[]).map(l => {
+                        const author = (l.profiles && l.profiles.full_name) || 'Unknown';
+                        return `
                         <div class="log-item">
-                            <div class="log-avatar">${l.profiles.full_name.charAt(0)}</div>
+                            <div class="log-avatar">${escapeHtml(author.charAt(0))}</div>
                             <div class="log-content">
                                 <div class="log-meta">
-                                    <span>${l.profiles.full_name}</span>
+                                    <span>${escapeHtml(author)}</span>
                                     <span>${new Date(l.created_at).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</span>
                                 </div>
-                                <div style="color:var(--text-main); line-height:1.4;">${l.note||''}</div>
-                                ${l.file_url ? `<div style="margin-top:8px;"><a href="${l.file_url}" target="_blank" style="color:var(--accent);">📎 Attachment</a></div>` : ''}
+                                <div style="color:var(--text-main); line-height:1.4;">${escapeHtml(l.note||'')}</div>
+                                ${l.file_url ? `<div style="margin-top:8px;"><a href="${escapeHtml(l.file_url)}" target="_blank" style="color:var(--accent);">📎 Attachment</a></div>` : ''}
                             </div>
-                        </div>`).join('')}
+                        </div>`;
+                    }).join('')}
                 </div>
             </div>
 
@@ -477,7 +485,10 @@ async function selectTask(taskId) {
                 </div>
             </div>
         `;
-    } catch(err) { console.error(err); }
+    } catch(err) { 
+        console.error(err);
+        panel.innerHTML = `<div style="padding:40px; color:#ef4444; text-align:center;">Error loading task: ${escapeHtml(err.message)}</div>`;
+    }
 }
 
 function renderStatusButtons(task) {
@@ -641,11 +652,6 @@ async function previewReport() {
             </tbody>
         </table>
     `;
-}
-
-function escapeHtml(text) {
-    if (!text) return '';
-    return text.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
 async function exportReportExcel() {
