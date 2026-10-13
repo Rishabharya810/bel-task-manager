@@ -1,4 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
+import * as XLSX from 'xlsx';
+import { jsPDF } from 'jspdf';
+import 'jspdf-autotable';
 import './style.css';
 
 // =========================================
@@ -42,6 +45,15 @@ function wireEventListeners() {
     // List panel
     document.getElementById('logout-btn')?.addEventListener('click', handleLogout);
     document.getElementById('create-task-btn')?.addEventListener('click', createTask);
+    document.getElementById('reports-btn')?.addEventListener('click', openReports);
+
+    // Reports modal
+    document.getElementById('close-reports-btn')?.addEventListener('click', closeReports);
+    document.getElementById('report-type')?.addEventListener('change', previewReport);
+    document.getElementById('report-start')?.addEventListener('change', previewReport);
+    document.getElementById('report-end')?.addEventListener('change', previewReport);
+    document.getElementById('export-pdf-btn')?.addEventListener('click', exportReportPDF);
+    document.getElementById('export-excel-btn')?.addEventListener('click', exportReportExcel);
 
     // Settings modal
     document.getElementById('open-settings-btn')?.addEventListener('click', openSettings);
@@ -194,13 +206,16 @@ async function initApp(user) {
     currentProfile = profile;
     document.getElementById('current-user-name').innerText = profile.full_name;
 
-    // Admin Sidebar Visibility
-    if (profile.role === 'admin') {
+    // Sidebar Visibility (Admin or Manager)
+    if (profile.role === 'admin' || profile.role === 'manager') {
         document.getElementById('dir-sidebar').classList.remove('hidden');
         loadDirectory();
     } else {
         document.getElementById('dir-sidebar').classList.add('hidden');
     }
+    // Hide team report option for non-managers
+    const teamOption = document.getElementById('team-report-option');
+    if (teamOption) teamOption.style.display = (profile.role === 'manager' || profile.role === 'admin') ? 'block' : 'none';
     loadMyTasks();
 }
 
@@ -253,8 +268,8 @@ function openUserModal(userId) {
     });
 
     const superPanel = document.getElementById('super-admin-controls');
-    // Only Admin@bel.com gets the Super Admin buttons
-    if(currentUser.email === 'admin@bel.com') {
+    // Only admins get the Super Admin buttons
+    if(currentProfile.role === 'admin') {
         superPanel.classList.remove('hidden');
     } else {
         superPanel.classList.add('hidden');
@@ -274,14 +289,14 @@ async function saveManager() {
 
 async function promoteUser(role) {
     if (!sb) return;
-    if(currentUser.email !== 'admin@bel.com') return alert("Permission Denied");
+    if(currentProfile.role !== 'admin') return alert("Permission Denied");
     await sb.from('profiles').update({ role: role }).eq('id', targetManageUser.id);
     alert("Role Updated"); closeUserModal(); loadDirectory();
 }
 
 async function deleteUser() {
     if (!sb) return;
-    if(currentUser.email !== 'admin@bel.com') return alert("Permission Denied");
+    if(currentProfile.role !== 'admin') return alert("Permission Denied");
     if(confirm("Permanently Delete User?")) {
         await sb.from('profiles').delete().eq('id', targetManageUser.id);
         alert("Deleted"); closeUserModal(); loadDirectory();
@@ -554,7 +569,136 @@ async function addCollaborator() {
     }
 }
 
+// =========================================
+// 10. REPORTS MODULE
+// =========================================
+function openReports() {
+    document.getElementById('reports-modal').classList.remove('hidden');
+    const today = new Date();
+    const start = new Date();
+    start.setDate(today.getDate() - 7);
+    document.getElementById('report-end').valueAsDate = today;
+    document.getElementById('report-start').valueAsDate = start;
+    previewReport();
+}
+
+function closeReports() { document.getElementById('reports-modal').classList.add('hidden'); }
+
+async function fetchReportData() {
+    if (!sb) return [];
+    const type = document.getElementById('report-type').value;
+    const start = document.getElementById('report-start').value;
+    const end = document.getElementById('report-end').value;
+
+    let query = sb.from('tasks').select('*, assignee:profiles!tasks_assigned_to_fkey(full_name), creator:profiles!tasks_created_by_fkey(full_name)');
+
+    if (type === 'individual') {
+        query = query.or(`assigned_to.eq.${currentUser.id},created_by.eq.${currentUser.id}`);
+    }
+    // For team report, RLS already filters to manager subtree
+
+    if (start) query = query.gte('task_date', start);
+    if (end) query = query.lte('task_date', end);
+
+    const { data, error } = await query.order('created_at', { ascending: false });
+    if (error) { console.error(error); alert('Report fetch error: ' + error.message); }
+    return data || [];
+}
+
+async function previewReport() {
+    const tasks = await fetchReportData();
+    const container = document.getElementById('report-preview');
+    if (!tasks.length) {
+        container.innerHTML = '<p style="color:var(--text-muted); text-align:center;">No tasks found for selected filters.</p>';
+        return;
+    }
+    const counts = { pending: 0, 'in-progress': 0, review: 0, completed: 0 };
+    tasks.forEach(t => { if (counts[t.status] !== undefined) counts[t.status]++; });
+    container.innerHTML = `
+        <div style="margin-bottom:15px;">
+            <strong>Total tasks:</strong> ${tasks.length} &nbsp;|&nbsp;
+            <span style="color:#f59e0b;">Pending: ${counts.pending}</span> &nbsp;|&nbsp;
+            <span style="color:#3b82f6;">In Progress: ${counts['in-progress']}</span> &nbsp;|&nbsp;
+            <span style="color:#8b5cf6;">Review: ${counts.review}</span> &nbsp;|&nbsp;
+            <span style="color:#10b981;">Completed: ${counts.completed}</span>
+        </div>
+        <table style="width:100%; border-collapse:collapse; font-size:0.85em;">
+            <thead><tr style="border-bottom:1px solid var(--border);">
+                <th style="text-align:left; padding:6px;">Title</th>
+                <th style="text-align:left; padding:6px;">Assignee</th>
+                <th style="text-align:left; padding:6px;">Status</th>
+                <th style="text-align:left; padding:6px;">Date</th>
+            </tr></thead>
+            <tbody>
+                ${tasks.map(t => `
+                    <tr style="border-bottom:1px solid var(--border);">
+                        <td style="padding:6px;">${escapeHtml(t.title)}</td>
+                        <td style="padding:6px;">${escapeHtml(t.assignee?.full_name || 'Unassigned')}</td>
+                        <td style="padding:6px;"><span class="badge" style="background:${getStatusColor(t.status)}15; color:${getStatusColor(t.status)};">${t.status}</span></td>
+                        <td style="padding:6px;">${t.task_date || '-'}</td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+    `;
+}
+
+function escapeHtml(text) {
+    if (!text) return '';
+    return text.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+async function exportReportExcel() {
+    const tasks = await fetchReportData();
+    if (!tasks.length) return alert('No data to export.');
+    const rows = tasks.map(t => ({
+        Title: t.title,
+        Description: t.description,
+        Status: t.status,
+        Priority: t.priority,
+        Assignee: t.assignee?.full_name || 'Unassigned',
+        Date: t.task_date,
+        'Time Spent (min)': t.time_spent
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Tasks');
+    XLSX.writeFile(wb, `BEL_Tasks_Report_${new Date().toISOString().slice(0,10)}.xlsx`);
+}
+
+async function exportReportPDF() {
+    const tasks = await fetchReportData();
+    if (!tasks.length) return alert('No data to export.');
+    const doc = new jsPDF();
+    doc.setFontSize(16);
+    doc.text('BEL Task Command Center - Report', 14, 20);
+    doc.setFontSize(10);
+    const start = document.getElementById('report-start').value;
+    const end = document.getElementById('report-end').value;
+    doc.text(`Period: ${start || 'All'} to ${end || 'All'}`, 14, 28);
+    doc.text(`Generated by: ${currentProfile.full_name} (${currentProfile.role})`, 14, 34);
+
+    const body = tasks.map(t => [
+        t.title,
+        t.assignee?.full_name || 'Unassigned',
+        t.status,
+        t.task_date || '-'
+    ]);
+
+    doc.autoTable({
+        head: [['Title', 'Assignee', 'Status', 'Date']],
+        body,
+        startY: 42,
+        styles: { fontSize: 9, cellPadding: 2 },
+        headStyles: { fillColor: [15, 23, 42] }
+    });
+
+    doc.save(`BEL_Tasks_Report_${new Date().toISOString().slice(0,10)}.pdf`);
+}
+
 // Expose functions needed by inline HTML handlers
+window.openReports = openReports;
+window.closeReports = closeReports;
 window.toggleTheme = toggleTheme;
 window.toggleAuthMode = toggleAuthMode;
 window.openSettings = openSettings;
