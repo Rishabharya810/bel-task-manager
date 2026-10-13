@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite';
 
 export default defineConfig({
-  base: '/',
+  base: '/bel-task-manager/',
   envPrefix: 'VITE_',
   server: {
     port: 5173,
