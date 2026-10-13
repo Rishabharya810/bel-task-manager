@@ -2,9 +2,6 @@
 -- Tables: profiles, tasks, subtasks, task_logs
 -- Auth + Row-Level Security enabled
 
--- Enable required extensions
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-
 -- Profiles: one row per authenticated user, mirrors auth.users
 CREATE TABLE public.profiles (
   id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
@@ -25,7 +22,7 @@ CREATE INDEX idx_profiles_email ON public.profiles(email);
 
 -- Tasks
 CREATE TABLE public.tasks (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   title TEXT NOT NULL,
   description TEXT DEFAULT '',
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'in-progress', 'review', 'completed')),
@@ -46,7 +43,7 @@ CREATE INDEX idx_tasks_task_date ON public.tasks(task_date);
 
 -- Subtasks / checklist
 CREATE TABLE public.subtasks (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   task_id UUID NOT NULL REFERENCES public.tasks(id) ON DELETE CASCADE,
   title TEXT NOT NULL,
   is_completed BOOLEAN DEFAULT FALSE,
@@ -57,7 +54,7 @@ CREATE INDEX idx_subtasks_task_id ON public.subtasks(task_id);
 
 -- Activity / change logs
 CREATE TABLE public.task_logs (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   task_id UUID NOT NULL REFERENCES public.tasks(id) ON DELETE CASCADE,
   user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
   note TEXT DEFAULT '',
