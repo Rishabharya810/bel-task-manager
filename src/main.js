@@ -372,7 +372,7 @@ async function refreshList() {
             const isActive = activeTaskId === t.id ? 'selected' : '';
             const isGroup = t.collaborators && t.collaborators.length > 0;
             return `
-            <div class="task-item ${isActive}" onclick="selectTask(${t.id})">
+            <div class="task-item ${isActive}" onclick="selectTask('${t.id}')">
                 <div>
                     <span class="status-indicator" style="background:${color}; box-shadow: 0 0 5px ${color};"></span>
                     <strong style="color:var(--text-main);">${t.title}</strong>
@@ -441,7 +441,7 @@ async function selectTask(taskId) {
                 <div>
                     ${(subtasks||[]).map(st => `
                         <div class="subtask-item">
-                            <input type="checkbox" ${st.is_completed?'checked':''} onchange="toggleSubtask(${st.id},this.checked)">
+                            <input type="checkbox" ${st.is_completed?'checked':''} onchange="toggleSubtask('${st.id}',this.checked)">
                             <span class="${st.is_completed?'st-done':''}" style="color:var(--text-main);">${st.title}</span>
                         </div>`).join('')}
                     ${(!subtasks || subtasks.length === 0) ? '<div style="color:var(--text-muted); font-style:italic;">No checklist items yet.</div>' : ''}
